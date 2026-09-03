@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"encoding/base64"
@@ -23,9 +23,10 @@ func (auth *Login) Start(server *smtp.ServerInfo) (string, []byte, error) {
 }
 
 func (auth *Login) Next(fromServer []byte, more bool) ([]byte, error) {
-	dst := make([]byte, base64.StdEncoding.EncodedLen(len(auth.password)))
-	if more {
-		base64.StdEncoding.Encode(dst, []byte(auth.password))
+	if !more {
+		return nil, nil
 	}
+	dst := make([]byte, base64.StdEncoding.EncodedLen(len(auth.password)))
+	base64.StdEncoding.Encode(dst, []byte(auth.password))
 	return dst, nil
 }
