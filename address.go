@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"fmt"

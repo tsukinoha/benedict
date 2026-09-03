@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"strings"
@@ -102,6 +102,13 @@ func TestDsnParse(t *testing.T) {
 			587,
 			"::1:587",
 		},
+		{ // upper boundary of a valid TCP port
+			"smtp://example.com:65535",
+			"smtp",
+			"example.com",
+			65535,
+			"example.com:65535",
+		},
 	}
 	// Test
 	for i, c := range cases {
@@ -147,11 +154,17 @@ func TestDsnParseError(t *testing.T) {
 			"smtps://example.com:12345678901234567890",
 			"port must be",
 		},
+		{ // in-range for uint32 but out of the valid TCP port range
+			"smtps://example.com:70000",
+			"port must be",
+		},
 	}
 	for i, c := range cases {
 		d := newDsn(c.dsn)
 		err := d.parse()
 		if err == nil {
+			t.Errorf(`[Case%d] Result: <nil> Expected an error containing:%v`, i, c.err)
+			continue
 		}
 		if !strings.Contains(err.Error(), c.err) {
 			t.Errorf(`[Case%d] Result:%v Expected:%v`, i, err, c.err)

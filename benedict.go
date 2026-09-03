@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"encoding/base64"
@@ -9,12 +9,12 @@ import (
 )
 
 const (
-	PprodctName = "MaiLetter Mail Client"
-	Version     = "0.2.1"
-	br          = "\r\n"
-	whiteSpace  = " \r\n\t\v\b"
-	shouldBr    = 78
-	mustBr      = 998
+	ProdctName = "MaiLetter Mail Client"
+	Version    = "0.4.0"
+	br         = "\r\n"
+	whiteSpace = " \r\n\t\v\b"
+	shouldBr   = 78
+	mustBr     = 998
 )
 
 type (
@@ -89,7 +89,7 @@ func border(length int) string {
 	sb := strings.Builder{}
 	sb.WriteString(strings.Repeat("-", 12))
 	for i := 0; i < length; i++ {
-		idx := rand.Intn(l - 1)
+		idx := rand.Intn(l)
 		sb.WriteString(s[idx])
 	}
 	return sb.String()

@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"crypto/tls"
@@ -25,7 +25,6 @@ func New(dsnStr string) *Client {
 	c.auth = nil
 	data := newData()
 	c.data = data
-	fmt.Println("Client.New", c)
 	return c
 }
 
@@ -105,7 +104,6 @@ func (c *Client) Send() error {
 	}
 	for _, addrs := range [][]*Address{c.data.to, c.data.cc, c.data.bcc} {
 		for _, a := range addrs {
-			fmt.Println(a.Angle())
 			err = c.conn.Rcpt(a.address)
 			if err != nil {
 				return err
@@ -118,8 +116,11 @@ func (c *Client) Send() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(c.data.create())
-	_, err = wc.Write([]byte(c.data.String()))
+	msg, err := c.data.Create()
+	if err != nil {
+		return err
+	}
+	_, err = wc.Write([]byte(msg))
 	if err != nil {
 		return err
 	}
@@ -163,21 +164,17 @@ func (c *Client) connect() error {
 		c.conn, err = c.connectBySmtp(c.dsn)
 	}
 	if err != nil {
-		fmt.Println("[1]", err)
 		return err
 	}
 	// Hello
 	err = c.conn.Hello(c.localName)
 	if err != nil {
-		fmt.Println("[2]", err)
 		return err
 	}
 	// Auth
-	fmt.Println(c.dsn)
 	if c.auth != nil {
 		err = c.conn.Auth(c.auth)
 		if err != nil {
-			fmt.Println("[3]", err)
 			return err
 		}
 	}
@@ -219,6 +216,6 @@ func (c *Client) connectWithTls(d *dsn) (*smtp.Client, error) {
 }
 
 func (c *Client) String() string {
-	fmt.Println("Client.String()", c.data)
-	return c.data.String()
+	msg, _ := c.data.Create()
+	return msg
 }

@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"fmt"
@@ -49,7 +49,7 @@ func (d *dsn) parse() error {
 	}
 	if u.Port() != "" {
 		tmpPort, err := strconv.ParseUint(u.Port(), 10, 32)
-		if err != nil || port > 65535 {
+		if err != nil || tmpPort > 65535 {
 			return fmt.Errorf(`port must be 0 - 65535`)
 		}
 		port = int(tmpPort)

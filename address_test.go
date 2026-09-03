@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"errors"
@@ -7,8 +7,8 @@ import (
 
 func TestNewAddress(t *testing.T) {
 	cases := []struct {
-		name     string
 		address  string
+		name     string
 		expected *Address
 	}{
 		{
@@ -26,10 +26,15 @@ func TestNewAddress(t *testing.T) {
 			"",
 			&Address{address: "addr@example.com", name: ""},
 		},
-		{ // Not Mail
+		{ // Not Mail: newAddress() itself performs no validation, only parse() does
 			"addratexample.com",
 			"",
 			&Address{address: "addratexample.com", name: ""},
+		},
+		{ // line breaks must be stripped from both address and name
+			"addr@example.com\r\n",
+			"John\r\nSmith",
+			&Address{address: "addr@example.com", name: "JohnSmith"},
 		},
 	}
 

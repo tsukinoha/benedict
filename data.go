@@ -1,4 +1,4 @@
-package mailetter
+package benedict
 
 import (
 	"bytes"
@@ -32,8 +32,6 @@ type (
 
 func newData() *data {
 	d := new(data)
-	fmt.Printf("%T - %p\n", d, d)
-	fmt.Println("Data.New", d)
 	d.reset()
 	return d
 }
@@ -148,8 +146,15 @@ func (d *data) setSubject(subject string) {
 
 func (d *data) setBody(r io.Reader) {
 	body, _ := io.ReadAll(r)
-	rplr := strings.NewReplacer("\r\n", "\n", "\r", "\n", "\n", "\r\n")
-	bodyText := rplr.Replace(string(body))
+	bodyText := string(body)
+	// Normalize every line-ending style to CRLF. This has to happen as three
+	// sequential passes: a single strings.Replacer with all three rules would
+	// match "\r\n" and "\n" at the same position and (per its documented
+	// argument-order tie-break) always prefer the "\r\n"->"\n" rule, which
+	// collapses CRLF input down to bare LF instead of normalizing it to CRLF.
+	bodyText = strings.ReplaceAll(bodyText, "\r\n", "\n")
+	bodyText = strings.ReplaceAll(bodyText, "\r", "\n")
+	bodyText = strings.ReplaceAll(bodyText, "\n", "\r\n")
 	d.body = template.Must(template.New("Body").Parse(bodyText))
 }
 
@@ -157,7 +162,7 @@ func (d *data) setValue(key string, val any) {
 	d.vars[key] = val
 }
 
-func (d *data) create() (string, error) {
+func (d *data) Create() (string, error) {
 	if d.from == nil {
 		return "", errors.New(`"From:" address is NOT specified.`)
 	} else if len(d.to) == 0 {
@@ -171,8 +176,8 @@ func (d *data) create() (string, error) {
 	// buf := bytes.NewBuffer(make([]byte, 10240))
 
 	// Headers
-	line.Reset()
 	for _, v := range d.headers {
+		line.Reset()
 		line.WriteString(fmt.Sprintf("%s: %s\r\n", v.key, encodeMimeString(v.value, true)))
 		sb.WriteString(line.String())
 	}
@@ -213,10 +218,9 @@ func (d *data) create() (string, error) {
 	}
 	buf := bytes.NewBuffer([]byte{})
 	d.subject.Execute(buf, d.vars)
-	subject := encodeMimeString(buf.String(), true)
 	line.Reset()
 	line.WriteString("Subject: ")
-	line.WriteString(encodeMimeString(subject, true))
+	line.WriteString(encodeMimeString(buf.String(), true))
 	line.WriteString("\r\n")
 	sb.WriteString(line.String())
 

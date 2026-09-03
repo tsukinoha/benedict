@@ -1,12 +1,15 @@
-package mailetter
+package benedict
 
 import (
-	"fmt"
+	"bufio"
+	"bytes"
 	"io"
+	"net/mail"
 	"reflect"
 	"strings"
 	"testing"
 	"text/template"
+	"time"
 )
 
 func TestNewData(t *testing.T) {
@@ -114,7 +117,7 @@ func TestDataSetHeader(t *testing.T) {
 	m.setFrom(from)
 	for k, v := range cases {
 		m.setHeader(v.key, v.val)
-		key := strings.ToLower(v.key)
+		key := strings.ReplaceAll(strings.ToLower(v.key), "-", "")
 		_, ok := m.headers[key]
 		if ok == v.exists {
 			if !v.exists {
@@ -136,7 +139,54 @@ func TestDataSetHeader(t *testing.T) {
 }
 
 func TestDataSetFrom(t *testing.T) {
+	t.Run("valid address is accepted and seeds ReturnPath/ReplyTo", func(t *testing.T) {
+		m := newData()
+		from := newAddress("from@example.com", "Sender")
+		if err := m.setFrom(from); err != nil {
+			t.Fatalf("setFrom() error = %v", err)
+		}
+		if m.from != from {
+			t.Errorf("from = %v, want %v", m.from, from)
+		}
+		if m.returnPath != from {
+			t.Errorf("returnPath = %v, want it defaulted to %v", m.returnPath, from)
+		}
+		if m.replyTo != from {
+			t.Errorf("replyTo = %v, want it defaulted to %v", m.replyTo, from)
+		}
+	})
 
+	t.Run("existing ReturnPath/ReplyTo are not overwritten", func(t *testing.T) {
+		m := newData()
+		returnPath := newAddress("return-path@example.com", "")
+		replyTo := newAddress("reply-to@example.com", "")
+		if err := m.setReturnPath(returnPath); err != nil {
+			t.Fatalf("setReturnPath() error = %v", err)
+		}
+		if err := m.setReplyTo(replyTo); err != nil {
+			t.Fatalf("setReplyTo() error = %v", err)
+		}
+		from := newAddress("from@example.com", "Sender")
+		if err := m.setFrom(from); err != nil {
+			t.Fatalf("setFrom() error = %v", err)
+		}
+		if m.returnPath != returnPath {
+			t.Errorf("returnPath = %v, want it to stay %v", m.returnPath, returnPath)
+		}
+		if m.replyTo != replyTo {
+			t.Errorf("replyTo = %v, want it to stay %v", m.replyTo, replyTo)
+		}
+	})
+
+	t.Run("invalid (empty) address is rejected", func(t *testing.T) {
+		m := newData()
+		if err := m.setFrom(newAddress("", "")); err == nil {
+			t.Error("setFrom() error = nil, want an error for an empty address")
+		}
+		if m.from != nil {
+			t.Errorf("from = %v, want nil after a rejected address", m.from)
+		}
+	})
 }
 
 func TestDataSetTo(t *testing.T) {
@@ -152,13 +202,21 @@ func TestDataSetTo(t *testing.T) {
 	m.setFrom(from)
 	for k, v := range cases {
 		a := newAddress(v.addr, "")
-		m.setTo(a)
+		if err := m.setTo(a); err != nil {
+			t.Fatalf("[Case%d] setTo() error = %v", k, err)
+		}
 		if m.to[k] != a {
 			t.Errorf("[Case%d] Address: %v (%v)", k, m.to[k], a)
 		}
 	}
 	if len(m.to) != len(cases) {
 		t.Errorf("[Case%d] Count: %d (%d)", 999, len(m.to), len(cases))
+	}
+	if err := m.setTo(newAddress("", "")); err == nil {
+		t.Error(`setTo() with an empty address should return an error`)
+	}
+	if len(m.to) != len(cases) {
+		t.Errorf(`an empty address should not be appended: Count: %d (%d)`, len(m.to), len(cases))
 	}
 }
 
@@ -175,13 +233,21 @@ func TestDataSetCc(t *testing.T) {
 	m.setFrom(from)
 	for k, v := range cases {
 		a := newAddress(v.addr, "")
-		m.setCc(a)
+		if err := m.setCc(a); err != nil {
+			t.Fatalf("[Case%d] setCc() error = %v", k, err)
+		}
 		if m.cc[k] != a {
 			t.Errorf("[Case%d] Address: %v (%v)", k, m.cc[k], a)
 		}
 	}
 	if len(m.cc) != len(cases) {
 		t.Errorf("[Case%d] Count: %d (%d)", 999, len(m.cc), len(cases))
+	}
+	if err := m.setCc(newAddress("", "")); err == nil {
+		t.Error(`setCc() with an empty address should return an error`)
+	}
+	if len(m.cc) != len(cases) {
+		t.Errorf(`an empty address should not be appended: Count: %d (%d)`, len(m.cc), len(cases))
 	}
 }
 
@@ -204,13 +270,21 @@ func TestDataSetBcc(t *testing.T) {
 	m.setFrom(from)
 	for k, v := range cases {
 		a := newAddress(v.addr, "")
-		m.setBcc(a)
+		if err := m.setBcc(a); err != nil {
+			t.Fatalf("[Case%d] setBcc() error = %v", k, err)
+		}
 		if m.bcc[k] != a {
 			t.Errorf("[Case%d] Address: %v (%v)", k, m.bcc[k], a)
 		}
 	}
 	if len(m.bcc) != len(cases) {
 		t.Errorf("[Case%d] Count: %d (%d)", 999, len(m.bcc), len(cases))
+	}
+	if err := m.setBcc(newAddress("", "")); err == nil {
+		t.Error(`setBcc() with an empty address should return an error`)
+	}
+	if len(m.bcc) != len(cases) {
+		t.Errorf(`an empty address should not be appended: Count: %d (%d)`, len(m.bcc), len(cases))
 	}
 }
 
@@ -227,13 +301,26 @@ func TestDataSetReturnPath(t *testing.T) {
 
 	for k, v := range cases {
 		m := newData()
-		if m.replyTo.address != v.from.address {
-			t.Errorf(`[Case%d] InitAddr: %s (%s)`, k, m.replyTo.address, v.from.address)
+		if m.returnPath != nil {
+			t.Errorf(`[Case%d] InitAddr should be nil before "From:" is set: %v`, k, m.returnPath)
 			continue
 		}
-		m.setReplyTo(v.ret)
-		if m.replyTo.address != v.ret.address {
-			t.Errorf(`[Case%d] InitAddr: %s (%s)`, k, m.replyTo.address, v.ret.address)
+		if err := m.setFrom(v.from); err != nil {
+			t.Fatalf(`[Case%d] setFrom() error: %v`, k, err)
+		}
+		if m.returnPath.address != v.from.address {
+			t.Errorf(`[Case%d] InitAddr: %s (%s)`, k, m.returnPath.address, v.from.address)
+			continue
+		}
+		if err := m.setReturnPath(v.ret); err != nil {
+			t.Fatalf(`[Case%d] setReturnPath() error: %v`, k, err)
+		}
+		if m.returnPath.address != v.ret.address {
+			t.Errorf(`[Case%d] InitAddr: %s (%s)`, k, m.returnPath.address, v.ret.address)
+		}
+		// "Reply-To:" must stay untouched by setReturnPath().
+		if m.replyTo.address != v.from.address {
+			t.Errorf(`[Case%d] ReplyTo should be unaffected: %s (%s)`, k, m.replyTo.address, v.from.address)
 		}
 	}
 }
@@ -251,6 +338,13 @@ func TestDataSetReplyTo(t *testing.T) {
 
 	for k, v := range cases {
 		m := newData()
+		if m.replyTo != nil {
+			t.Errorf(`[Case%d] InitAddr should be nil before "From:" is set: %v`, k, m.replyTo)
+			continue
+		}
+		if err := m.setFrom(v.from); err != nil {
+			t.Fatalf(`[Case%d] setFrom() error: %v`, k, err)
+		}
 		if m.replyTo.address != v.from.address {
 			t.Errorf(`[Case%d] InitAddr: %s (%s)`, k, m.replyTo.address, v.from.address)
 			continue
@@ -264,16 +358,24 @@ func TestDataSetReplyTo(t *testing.T) {
 
 func TestDataSetSubject(t *testing.T) {
 	cases := []struct {
-		subject string
-		vars    any
+		subject  string
+		vars     map[string]any
+		expected string
 	}{
 		{
 			"Subject1",
 			nil,
+			"Subject1",
 		},
 		{
 			"Dear {{.Name}}",
+			map[string]any{"Name": "Mr. Recipient"},
+			"Dear Mr. Recipient",
+		},
+		{ // line breaks in the raw subject must be stripped before parsing
+			"Line1\r\nLine2\n",
 			nil,
+			"Line1Line2",
 		},
 	}
 
@@ -285,22 +387,46 @@ func TestDataSetSubject(t *testing.T) {
 		typ := reflect.TypeOf(m.subject).String()
 		if typ != "*template.Template" {
 			t.Errorf(`[Case%d] %v`, k, m)
+			continue
+		}
+		buf := &bytes.Buffer{}
+		if err := m.subject.Execute(buf, v.vars); err != nil {
+			t.Errorf(`[Case%d] Execute() error: %v`, k, err)
+			continue
+		}
+		if buf.String() != v.expected {
+			t.Errorf(`[Case%d] Result: %q Expected: %q`, k, buf.String(), v.expected)
 		}
 	}
 }
 
 func TestDataSetBody(t *testing.T) {
 	cases := []struct {
-		body string
-		vars any
+		body     string
+		vars     map[string]any
+		expected string
 	}{
 		{
 			"Test Body Part1",
 			nil,
+			"Test Body Part1",
 		},
-		{
-			"Test\r\nBody\r\nPart2\r\n{{.Name}}",
+		{ // bare LF must be normalized to CRLF
+			"Test\nBody\nPart2\n{{.Name}}",
+			map[string]any{"Name": "value"},
+			"Test\r\nBody\r\nPart2\r\nvalue",
+		},
+		{ // CRLF input must remain CRLF (regression test for the
+			// strings.Replacer tie-break bug that used to collapse
+			// "\r\n" down to a bare "\n")
+			"Test\r\nBody\r\nPart2",
 			nil,
+			"Test\r\nBody\r\nPart2",
+		},
+		{ // lone CR (old Mac style) must also be normalized to CRLF
+			"Test\rBody\rPart2",
+			nil,
+			"Test\r\nBody\r\nPart2",
 		},
 	}
 
@@ -308,11 +434,19 @@ func TestDataSetBody(t *testing.T) {
 	from := newAddress("from@example.com", "送信者")
 	m.setFrom(from)
 	for k, v := range cases {
-		m.setSubject(v.body)
-		typ := reflect.TypeOf(m.subject).String()
-		fmt.Println(typ)
+		m.setBody(strings.NewReader(v.body))
+		typ := reflect.TypeOf(m.body).String()
 		if typ != "*template.Template" {
 			t.Errorf(`[Case%d] %v`, k, m)
+			continue
+		}
+		buf := &bytes.Buffer{}
+		if err := m.body.Execute(buf, v.vars); err != nil {
+			t.Errorf(`[Case%d] Execute() error: %v`, k, err)
+			continue
+		}
+		if buf.String() != v.expected {
+			t.Errorf(`[Case%d] Result: %q Expected: %q`, k, buf.String(), v.expected)
 		}
 	}
 }
@@ -395,10 +529,186 @@ func TestDataString(t *testing.T) {
 		}
 		m.setSubject(c.subject)
 		m.setBody(c.body)
-		_, _ = m.Create()
+		result, err := m.Create()
+		if err != nil {
+			t.Fatalf(`[Case%d] Create() error: %v`, i, err)
+		}
 
-		if false {
-			t.Errorf(`[Case%d]`, i)
+		for _, v := range c.to {
+			if !strings.Contains(result, v.String()) {
+				t.Errorf(`[Case%d] "To:" section does not contain %q`, i, v.String())
+			}
+		}
+		for _, v := range c.cc {
+			if !strings.Contains(result, v.String()) {
+				t.Errorf(`[Case%d] "Cc:" section does not contain %q`, i, v.String())
+			}
+		}
+		// Bcc recipients must never leak into the generated message headers.
+		for _, v := range c.bcc {
+			if strings.Contains(result, v.String()) {
+				t.Errorf(`[Case%d] "Bcc:" address %q must not appear in the message`, i, v.String())
+			}
+		}
+	}
+}
+
+func TestDataCreateErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(d *data)
+		wantErr string
+	}{
+		{
+			name:    `"From:" is missing`,
+			setup:   func(d *data) {},
+			wantErr: `"From:" address is NOT specified.`,
+		},
+		{
+			name: `"To:" is missing`,
+			setup: func(d *data) {
+				_ = d.setFrom(newAddress("from@example.com", "Sender"))
+			},
+			wantErr: `"To:" address is NOT specified.`,
+		},
+		{
+			name: "body is missing",
+			setup: func(d *data) {
+				_ = d.setFrom(newAddress("from@example.com", "Sender"))
+				_ = d.setTo(newAddress("to@example.com", "Recipient"))
+			},
+			wantErr: `mail body is NOT specified.`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := newData()
+			c.setup(d)
+			result, err := d.Create()
+			if err == nil {
+				t.Fatalf("Create() returned no error, want %q (result: %q)", c.wantErr, result)
+			}
+			if err.Error() != c.wantErr {
+				t.Errorf("Create() error = %q, want %q", err.Error(), c.wantErr)
+			}
+			if result != "" {
+				t.Errorf("Create() result = %q, want empty string on error", result)
+			}
+		})
+	}
+}
+
+func TestDataCreateSuccess(t *testing.T) {
+	d := newData()
+	from := newAddress("from@example.com", "送信者")
+	to0 := newAddress("to0@example.com", "受信者To0")
+	to1 := newAddress("to1@example.com", "受信者To1")
+	cc0 := newAddress("cc0@example.com", "受信者Cc0")
+
+	if err := d.setFrom(from); err != nil {
+		t.Fatalf("setFrom() error = %v", err)
+	}
+	if err := d.setTo(to0); err != nil {
+		t.Fatalf("setTo() error = %v", err)
+	}
+	if err := d.setTo(to1); err != nil {
+		t.Fatalf("setTo() error = %v", err)
+	}
+	if err := d.setCc(cc0); err != nil {
+		t.Fatalf("setCc() error = %v", err)
+	}
+	if err := d.setHeader("X-Mailer", "Test Mailer"); err != nil {
+		t.Fatalf("setHeader() error = %v", err)
+	}
+	d.setValue("Name", "テスト太郎")
+	d.setValue("ServiceName", "ECサービス")
+	d.setSubject("[{{.ServiceName}}] {{.Name}}様 新商品のお知らせ")
+	d.setBody(strings.NewReader("{{.Name}}様\nいつもご利用ありがとうございます。\n{{.ServiceName}}カスタマーサポートでございます。"))
+
+	result, err := d.Create()
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	msg, err := mail.ReadMessage(bufio.NewReader(strings.NewReader(result)))
+	if err != nil {
+		t.Fatalf("Create() produced an unparseable message: %v\n---\n%s", err, result)
+	}
+
+	if got := msg.Header.Get("Content-Type"); got != "text/plain; charset=UTF-8" {
+		t.Errorf(`Content-Type = %q, want "text/plain; charset=UTF-8"`, got)
+	}
+	if got := msg.Header.Get("X-Mailer"); got != "Test Mailer" {
+		t.Errorf(`X-Mailer = %q, want "Test Mailer"`, got)
+	}
+	if _, err := time.Parse(time.RFC1123Z, msg.Header.Get("Date")); err != nil {
+		t.Errorf("Date header %q is not a valid RFC1123Z timestamp: %v", msg.Header.Get("Date"), err)
+	}
+	if got, want := msg.Header.Get("From"), from.String(); got != want {
+		t.Errorf("From = %q, want %q", got, want)
+	}
+
+	// The subject must be MIME-encoded exactly once after template execution.
+	wantSubject := encodeMimeString("[ECサービス] テスト太郎様 新商品のお知らせ", true)
+	if got := msg.Header.Get("Subject"); got != wantSubject {
+		t.Errorf("Subject = %q, want %q", got, wantSubject)
+	}
+
+	for _, addr := range []*Address{to0, to1} {
+		if !strings.Contains(result, addr.String()) {
+			t.Errorf("To header does not contain %q\n---\n%s", addr.String(), result)
+		}
+	}
+	if !strings.Contains(result, cc0.String()) {
+		t.Errorf("Cc header does not contain %q\n---\n%s", cc0.String(), result)
+	}
+
+	wantBody := "テスト太郎様\r\nいつもご利用ありがとうございます。\r\nECサービスカスタマーサポートでございます。"
+	gotBody, err := io.ReadAll(msg.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+	if got := string(gotBody); got != wantBody {
+		t.Errorf("Body = %q, want %q", got, wantBody)
+	}
+}
+
+// TestDataCreateMultipleHeaders is a regression test: Create() used to reuse
+// a single strings.Builder across the custom-header loop without resetting
+// it between iterations, so each header's line stayed in the builder and got
+// re-appended to the message for every subsequent header (e.g. with headers
+// X-A and X-B, X-A ended up written out twice).
+func TestDataCreateMultipleHeaders(t *testing.T) {
+	d := newData()
+	if err := d.setFrom(newAddress("from@example.com", "Sender")); err != nil {
+		t.Fatalf("setFrom() error = %v", err)
+	}
+	if err := d.setTo(newAddress("to@example.com", "Recipient")); err != nil {
+		t.Fatalf("setTo() error = %v", err)
+	}
+	d.setBody(strings.NewReader("body"))
+
+	headers := []struct{ key, value string }{
+		{"X-A", "a"},
+		{"X-B", "b"},
+		{"X-C", "c"},
+	}
+	for _, h := range headers {
+		if err := d.setHeader(h.key, h.value); err != nil {
+			t.Fatalf("setHeader(%q) error = %v", h.key, err)
+		}
+	}
+
+	result, err := d.Create()
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	for _, h := range headers {
+		wantLine := h.key + ": " + h.value
+		if n := strings.Count(result, wantLine); n != 1 {
+			t.Errorf("header line %q appears %d times, want exactly 1\n---\n%s", wantLine, n, result)
 		}
 	}
 }
